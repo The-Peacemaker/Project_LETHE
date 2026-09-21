@@ -1,119 +1,137 @@
-# LETHE — Core Brain (with the Base Paper grounding)
+# LETHE — The Ring That Holds the Key to Nothing
 
-Two layers live in this folder:
+> **Zero-trust, offline, wearable-NFC-anchored secure file exchange.**
+> Two devices. One tap. A key that is never sent — and then destroyed.
+> Resistant to all known attack vectors within the stated threat model. Never "unhackable".
 
-1. **Base paper implementation** — Maarouf, Sakr & Elmougy (IEEE Access, 2024),
-   DOI 10.1109/ACCESS.2024.3458424: offline ECC mutual authentication on
-   brainpoolP256r1.
-2. **LETHE core brain** — the product we are actually building: a zero-trust,
-   offline, wearable-NFC-anchored secure file exchange. Runs headless on this
-   PC today; the physical ring (NTAG215), ACR122U reader and Wi-Fi Direct hop
-   are on the roadmap.
+```mermaid
+flowchart LR
+    subgraph P["Phases 1-2 · Identity"]
+        I[ed25519 device identity<br/>keystore-only private key]
+        R[NTAG215 ring · 128 B of 504 B<br/>issuer-attested root of trust]
+    end
+    subgraph T["Phase 3 · The Tap"]
+        F((NFC field<br/>trust only,<br/>never a file))
+    end
+    subgraph A["Phases 4-5 · Trust"]
+        M[challenge-response<br/>mutual authentication]
+        K[X25519 ECDH → HKDF-SHA256<br/>AES-256, derived twice,<br/>transmitted never]
+    end
+    subgraph X["Phases 6-9 · Exchange"]
+        C[AES-256-GCM 64 KB chunks<br/>each verified]
+        O[signed one-view policy]
+        E[crypto-shredded key<br/>ciphertext becomes noise]
+    end
+    I --> R --> F --> M --> K --> C --> O --> E
+```
 
-## The LETHE layer (the thing we are using)
-
-| Module | Phase | What it proves |
-|---|---|---|
-| `lethe/identity.py` | 1 | ed25519 device identity, keystore-only private key |
-| `lethe/ring.py` | 2 | NTAG215 payload — Owner ID(16) + Device Pub(32) + Recovery Hash(16) + Signature(64) = **128 B of 504 B**, issuer-attested |
-| `lethe/tap.py` | 3 | Simulated NFC field — signed "tap" carrying only receiver key, nonce, metadata, challenge. Never a file |
-| `lethe/handshake.py` | 4+5 | Mutual auth (challenge-response) + X25519 ECDH → HKDF-SHA256 → AES-256 session key, derived twice, sent never |
-| `lethe/transfer.py` | 6+7 | AES-256-GCM 64 KB chunks, each verified; tamper = whole-file rejection |
-| `lethe/policy.py` | 8 | PCCP signed envelope: max_views, expires_at, recipient, erasure-mode |
-| `lethe/erasure.py` | 9 | Crypto-shredding key slot (NIST SP 800-88) — "Access denied. Cryptographic key has been destroyed." |
-| `lethe/keys.py` | 5+ | FSKE forward-secure sub-keys (HKDF chain, previous key wiped per chunk) |
-
-## The LETHE product demo (what to show)
+## Run it (no server, no internet)
 
 ```powershell
-cd "C:\Users\bened\Documents\MAIN PROJECT\Implementation"
-python lethe_product.py        # staged, press ENTER between scenes
+python lethe_product.py        # 8-scene cinematic demo, ENTER steps through scenes
 python lethe_product.py --auto # straight run, for recording
-python lethe_self_test.py      # 14 invariants
+python lethe_self_test.py      # 14 protocol invariants, green
 python lethe_attacks.py        # 14 attacks, all blocked
 ```
 
-Eight scenes walk the whole protocol: two identities born → two rings
-provisioned → alpha taps (only trust crosses the channel) → mutual
-authentication → the key derived twice and never sent → the file flies as
-verified AES-256-GCM chunks → the signed one-view policy → the second attempt
-meets **"Access denied. Cryptographic key has been destroyed."** while the
-ciphertext sits on disk as noise. Dim `SAY:` lines are the talk track.
+## Anatomy of one transfer
 
-## Base paper layer (grounding + status)
+```mermaid
+sequenceDiagram
+    participant A as Device A · Alpha
+    participant F as NFC field
+    participant B as Device B · Bravo
+    A->>F: TAP 1 — receiver key, nonce, challenge, metadata (signed)
+    Note over F: trust information only. The file stays put.
+    F->>B: Bravo verifies ring issuer seal + tap signature
+    B->>F: TAP 2 — signed answer to Alpha's challenge + ephemeral pub
+    F->>A: Alpha verifies response. Mutual auth complete.
+    Note over A,B: ECDH shared secret → HKDF → identical AES-256 key
+    A->>B: ciphertext over Wi-Fi Direct stand-in (verified GCM chunks)
+    B->>B: view 1 granted → key wiped (NIST SP 800-88)
+    B->>B: view 2 → "Access denied. Cryptographic key has been destroyed."
+```
 
-The full protocol of the base paper is implemented and green in `basepaper/` —
-see the section below for the exact mapping.
+## Where the key comes from (and why it is never sent)
+
+```mermaid
+flowchart TB
+    EA[Alpha ephemeral<br/>X25519 keypair] --> SA[shared secret<br/>priv_A × pub_B]
+    EB[Bravo ephemeral<br/>X25519 keypair] --> SB[shared secret<br/>priv_B × pub_A]
+    SA -.->|equal by Diffie-Hellman| SB
+    SB --> H[HKDF-SHA256<br/>salt = session id]
+    H --> K1[Alpha AES-256 key]
+    H --> K2[Bravo AES-256 key]
+    K1 -.->|identical, independently derived| K2
+```
+
+There is nothing to intercept because nothing travels. The key exists in two memories at once, briefly — then Phase 9 deletes the mathematics.
+
+## The ring: 128 bytes of trust
+
+```
+NTAG215 · 504 bytes usable · we occupy 128
+
++-----------------------------------------------+
+| Owner ID            16 B   UUID of this ring  |
+| Device public key   32 B   ed25519            |
+| Recovery hash       16 B   SHA-256(code)[:16] |
+| Issuer signature    64 B   ed25519 over above |
++-----------------------------------------------+
+| Free                         ~376 B           |
++-----------------------------------------------+
+```
+
+The ring is a key, not a container. A photograph is 3,000,000 bytes; the ring could not hold the file if it wanted to. It holds identity. The file flies over Wi-Fi Direct. The ring opens the door; the file walks through.
+
+## Module map (phase → file → proof)
+
+| Phase | Module | What it proves |
+|---|---|---|
+| 1 | `lethe/identity.py` | ed25519 identity per device; private key keystore-only |
+| 2 | `lethe/ring.py` | Provisioning, 128 B packing, issuer attestation |
+| 3 | `lethe/tap.py` | `NfcField` — signed tap messages; replay window + nonce memory |
+| 4 + 5 | `lethe/handshake.py` | Challenge-response auth + session-key agreement |
+| 5 | `lethe/keys.py` | ECDH, HKDF derivation, FSKE forward-secure sub-keys per chunk |
+| 6 + 7 | `lethe/transfer.py` | AES-256-GCM 64 KB frames `nonce(12)‖len(4)‖ct(+16 tag)`, verified per chunk |
+| 8 | `lethe/policy.py` | PCCP signed envelope: `max_views`, `expires_at`, `recipient`, destruction mode |
+| 9 | `lethe/erasure.py` | Self-wiping key slot: buffer zeroed, slot file wiped + unlinked |
+
+## Threat model (what is blocked, what is declared out of scope)
+
+```mermaid
+flowchart TB
+    ADV[Adversary] --> W[wiretap] & RP[replay] & TM[tamper] & FG[forge ring] & CL[clone ring] & PE[edit policy] & VL[exceed views]
+    W --> B1[blocked: GCM noise only]
+    RP --> B2[blocked: nonce remembered]
+    TM --> B3[blocked: tag rejects file]
+    FG --> B4[blocked: issuer seal invalid]
+    CL --> B5[blocked: challenge unanswerable]
+    PE --> B6[blocked: envelope seal breaks]
+    VL --> B7[blocked: key shredded]
+    ADV -.->|out of scope, stated openly| OOS[device malware · coercion without duress PIN · side channels · quantum]
+```
+
+Full battery in `lethe_attacks.py` — 14 blocked, 0 breaches. Honest limitations documented alongside, per the security model: device compromise, physical coercion, side channels, and quantum adversaries are outside the stated threat model.
+
+## Grounding: the base paper, reproduced
+
+`basepaper/` is a faithful implementation of **An Offline Direct Authentication Scheme for the Internet of Medical Things Based on Elliptic Curve Cryptography** (Maarouf, Sakr, Elmougy — IEEE Access, Vol. 12, 2024, DOI 10.1109/ACCESS.2024.3458424): brainpoolP256r1 arithmetic from scratch, the 5-step login with ECCDHP session-key agreement, 10/10 paper attacks rejected.
 
 ```powershell
-python product.py    # base-paper product demo (6 scenes)
-python demo.py       # install -> register -> mutual auth -> session key
-python attacks.py    # 10/10 attacks from the paper rejected
+python product.py    # 6-scene base-paper demo
+python demo.py       # install → register → mutual auth → session key
+python attacks.py    # paper attack battery
 python self_test.py  # group laws, ECCDHP, forward secrecy
 ```
 
-## Protocol mapping (Maarouf et al. 2024)
-
-### Installation phase (paper Sec. III-A)
-- 128-bit UUID (RFC 4122) per entity, ECC keypair on brainpoolP256r1,
-  256-bit long-term master secret `Xs`.
-
-### Registration phase (paper Sec. III-B)
-- **User device (QR):** server computes `Tki = h(h(Xs) || UIDi || Ex)` and
-  issues `{Tki, PLocal, Ex, SID}` via a QR code; device stores it in the smart card.
-  (`LocalServer.register_user`, `UserDevice.provision_from_qr`)
-- **IoMT device (BLE):** device sends `{DIDi, PDevice}`; the server encrypts the
-  same credential bundle with `PDevice` and the device decrypts with its private key.
-  (`LocalServer.register_device`, `IoMTDevice.register`)
-
-### Login authentication phase (paper Sec. III-C, Fig. 10/11)
-Five steps, message-identical to the paper:
-
-1. Device picks ephemeral `Ri`, computes `Gi = g*Ri`,
-   anonymous ID `RIDUi = h(Gi) XOR (Tki || UIDi || Ex)`, plus `h(bi || SID)`;
-   sends `M = Enc_PLocal(RIDUi, Gi, h(bi||SID))`.   (`login_step1`)
-2. Server decrypts, recovers `(Tki || UIDi || Ex)`, checks the token freshness
-   `Tk'i = h(h(Xs) || UIDi || Ex)`; picks `Rj`, computes `Gj = g*Rj`,
-   `P1 = h(RIDUi || SID || Gi || Gj)`; replies
-   `N = Enc_PUser(P1 || Gi || Gj)`.                  (`user_login`)
-3. Device decrypts `N`, verifies `P1' = P1` fresh, computes
-   `P2 = h(P1' || Gj*Ri)` and `SK = h(RIDUi || SID || Gj*Ri)`;
-   sends `P2` and `V = Enc_PLocal(SK, Gi, Gj)`.     (`login_step2`)
-4. Server verifies `P2' = h(P1 || Gi*Rj)` using the **ECCDHP property**
-   `Gi*Rj = Gj*Ri = g*Ri*Rj`, then decrypts `V` to obtain `SK`. (`user_finish`)
-
-Result: **mutual authentication** and a shared session key that is never
-transmitted on the channel.
-
-## Security analysis reproduced (`attacks.py`)
-
-Replay of `M` / old `(P2,V)`, forward secrecy (fresh keys per session),
-MITM (ciphertext corruption + forged token), impersonation, expired token,
-duplicate-registration DoS, tampering, and off-curve point injection — each
-is rejected, matching the paper's informal analysis (Sec. IV-A).
-
 ## Status
 
-Base paper:
-- [x] Installation + registration (QR / BLE) complete
-- [x] 5-step login mutual authentication complete
-- [x] ECCDHP session-key agreement verified
-- [x] Attack analysis reproduced (10/10 rejected)
-- [x] Demo + self-test green
+- [x] Base paper: 5-step mutual auth, ECCDHP key agreement, 10/10 attacks rejected
+- [x] LETHE phases 1–9 running on PC: 14/14 self-tests, 14/14 attacks blocked
+- [ ] NFC hardware (rings + ACR122U): `NfcField` is the seam the real tap drops into
+- [ ] Wi-Fi Direct socket, Android shell, TERA attestation, CoRDe duress PIN, Tamarin model
 
-LETHE core brain:
-- [x] Phase 1-2: identities + rings (128 B of 504 B, issuer-attested)
-- [x] Phase 3: tap simulation (trust-only channel)
-- [x] Phase 4-5: mutual auth + X25519 ECDH → HKDF → AES-256 (never sent)
-- [x] Phase 6-7: AES-256-GCM chunked flight, verified chunk-by-chunk
-- [x] Phase 8: PCCP signed policy envelope (max_views / expiry / recipient)
-- [x] Phase 9: crypto-shredding key slot — second view meets the line
-- [x] Self-test green (14 invariants) + attack battery (14/14 blocked)
+## The one honest paragraph
 
-## Next steps (hardware + hardening)
-
-- NFC rings (NTAG215) + ACR122U reader on order; swap `NfcField` for real tap
-- Wi-Fi Direct socket between two devices (Phase 6)
-- TERA ring attestation + AOTBC trust scoring on real RSSI data
-- CoRDe duress PIN, policy update without re-encryption
-- Tamarin formal model (parallel)
+The cryptography is real — ed25519, X25519, HKDF-SHA256, AES-256-GCM, challenge-response, signed policy, key shredding. A genuine file is encrypted, transferred, opened once, then mathematically destroyed. Simulated: the 10 cm NFC radio hop (a signed file stands in for the NDEF read) and the Wi-Fi Direct socket (a local handoff under the identical key). The mathematics cannot tell which radio carried its inputs — bytes are bytes.
