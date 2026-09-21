@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+run/
+*.enc
+*.dec
+*.sha
+*.tmp
+keyslot*
+.nfc_field/
