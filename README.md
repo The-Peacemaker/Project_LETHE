@@ -35,6 +35,19 @@ python lethe_self_test.py      # 14 protocol invariants, green
 python lethe_attacks.py        # 14 attacks, all blocked
 ```
 
+## Two terminals, two devices (the evaluator run)
+
+```powershell
+# Terminal 1 (projector): the receiver waits
+python lethe_recv.py
+# Terminal 2: the sender taps, authenticates, and hands over the file
+python lethe_send.py
+```
+
+Two OS processes, zero pre-shared state — fresh identities, rings, and keys
+on both sides, agreeing over a shared field directory exactly as two phones
+would agree over radio hops. Watch both session keys match.
+
 ## Anatomy of one transfer
 
 ```mermaid
