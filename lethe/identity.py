@@ -44,6 +44,14 @@ class DeviceIdentity:
         return self._priv.private_bytes(RAW, serialization.PrivateFormat.Raw,
                                         serialization.NoEncryption())
 
+    def raw_priv(self):
+        """The underlying ed25519 private key object (for envelope signing).
+
+        Prefer `sign()` for protocol use; this accessor exists for the
+        explicit sender-side packaging step and nothing else.
+        """
+        return self._priv
+
 
 def identity_from_file(path, name=None):
     """Load an identity saved by `identity_to_file`; new keypair if missing."""

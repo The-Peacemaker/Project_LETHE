@@ -93,7 +93,7 @@ def main():
     # ---------------------------------------------------------- SCENE 4: the key
     ui.scene(4, "ONE KEY, TWO DEVICES -- NEVER SENT")
     ui.say("Both sides derived the same key independently. It never crossed the wire.")
-    sess = server.sessions[RID]
+    sess = server.archive[RID]
     both = mul(sess["Rj"], deserialize(sess["Gi"]))
     mine = user._state["shared"]
     ui.info("Session key (phone)", SK.hex()[:32] + "...")
@@ -141,7 +141,7 @@ def main():
     ui.ok("5-step mutual authentication", "done")
     ui.ok("Session key via ECC Diffie-Hellman", "done")
     ui.ok("Real file sealed + recovered", "done")
-    ui.ok("Attack battery (attacks.py)", "10 / 10 rejected")
+    ui.ok("Attack battery (attacks.py)", "14 / 14 rejected")
     print()
     print(C.bold + C.green + "  Next: the LETHE layer -- NFC tap replaces the server, "
           "HKDF session keys, policy + self-destruct." + C.reset)

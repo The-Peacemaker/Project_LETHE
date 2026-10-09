@@ -97,7 +97,7 @@ def main():
 
     # ---------------------------------------------------------- ECCDHP cross check
     banner("VERIFICATION: ECCDHP PROPERTY  Gi*Rj = Gj*Ri = g*Ri*Rj")
-    sess = server.sessions[RID]
+    sess = server.archive[RID]
     Gi_p = deserialize(sess["Gi"])
     shared_server = mul(sess["Rj"], Gi_p)          # server: Gi*Rj
     shared_user = user._state["shared"]            # user:   Gj*Ri

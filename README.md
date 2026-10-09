@@ -28,6 +28,7 @@ flowchart LR
 ## Run it (no server, no internet)
 
 ```powershell
+pip install -r requirements.txt
 python lethe_product.py        # 8-scene cinematic demo, ENTER steps through scenes
 python lethe_product.py --auto # straight run, for recording
 python lethe_self_test.py      # 14 protocol invariants, green
@@ -116,7 +117,7 @@ Full battery in `lethe_attacks.py` — 14 blocked, 0 breaches. Honest limitation
 
 ## Grounding: the base paper, reproduced
 
-`basepaper/` is a faithful implementation of **An Offline Direct Authentication Scheme for the Internet of Medical Things Based on Elliptic Curve Cryptography** (Maarouf, Sakr, Elmougy — IEEE Access, Vol. 12, 2024, DOI 10.1109/ACCESS.2024.3458424): brainpoolP256r1 arithmetic from scratch, the 5-step login with ECCDHP session-key agreement, 10/10 paper attacks rejected.
+`basepaper/` is a faithful implementation of **An Offline Direct Authentication Scheme for the Internet of Medical Things Based on Elliptic Curve Cryptography** (Maarouf, Sakr, Elmougy — IEEE Access, Vol. 12, 2024, DOI 10.1109/ACCESS.2024.3458424): brainpoolP256r1 arithmetic from scratch, the 5-step login with ECCDHP session-key agreement, single-use sessions, and strict frame validation — 14/14 attacks rejected (10 from the paper plus step-5 replay, truncated frames, unprovisioned login, and off-curve registration).
 
 ```powershell
 python product.py    # 6-scene base-paper demo
@@ -127,9 +128,9 @@ python self_test.py  # group laws, ECCDHP, forward secrecy
 
 ## Status
 
-- [x] Base paper: 5-step mutual auth, ECCDHP key agreement, 10/10 attacks rejected
+- [x] Base paper: 5-step mutual auth, ECCDHP key agreement, single-use sessions, 14/14 attacks rejected
 - [x] LETHE phases 1–9 running on PC: 14/14 self-tests, 14/14 attacks blocked
-- [ ] NFC hardware (rings + ACR122U): `NfcField` is the seam the real tap drops into
+- [ ] NFC rings to procure; ACR122U reader deliberately skipped (phone provisioning, never in ceremony): `NfcField` is the seam the real tap drops into
 - [ ] Wi-Fi Direct socket, Android shell, TERA attestation, CoRDe duress PIN, Tamarin model
 
 ## The one honest paragraph

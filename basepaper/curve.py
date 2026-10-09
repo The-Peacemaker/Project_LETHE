@@ -91,7 +91,8 @@ def _to_affine(Q):
 
 def mul(k, point):
     """Return k*P for integer k and affine point P."""
-    if k % N == 0:
+    k = int(k) % N
+    if k == 0 or point is INF:
         return INF
     G_jac = (GX, GY, 1) if point == (GX, GY) else _lifty(point)
     R = INF
@@ -139,12 +140,23 @@ def serialize(point):
 
 
 def deserialize(data):
+    """Strict 65-byte decoding: flag 0x00 (infinity) or 0x02 (x‖y), canonical range."""
+    if data is None or len(data) != 65:
+        raise ValueError("point encoding must be exactly 65 bytes")
     if data[0] == 0x00:
+        if data[1:] != b"\x00" * 64:
+            raise ValueError("non-canonical infinity encoding")
         return INF
+    if data[0] != 0x02:
+        raise ValueError("unknown point encoding flag")
     x = int.from_bytes(data[1:33], "big")
     y = int.from_bytes(data[33:65], "big")
+    if not (0 <= x < P and 0 <= y < P):
+        raise ValueError("coordinates outside the field")
     return (x, y)
 
 
 def rand_scalar():
     return randbelow(N - 1) + 1
+
+    

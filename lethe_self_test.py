@@ -193,7 +193,7 @@ def test_tamper_rejected():
 def test_policy():
     ident = DeviceIdentity("sender")
     ct = os.urandom(64)
-    env = seal_package("f", Policy(max_views=1), ct, ident._priv)
+    env = seal_package("f", Policy(max_views=1), ct, ident.raw_priv())
     assert env.verify_signature()
     assert env.check_integrity(ct)
     enforce_policy(env, "officer-bravo")           # star recipient
@@ -217,7 +217,7 @@ def SignedEnvelope_load(env):
 def test_policy_recipient_and_expiry():
     ident = DeviceIdentity("sender")
     ct = os.urandom(64)
-    env = seal_package("f", Policy(recipient="bravo"), ct, ident._priv)
+    env = seal_package("f", Policy(recipient="bravo"), ct, ident.raw_priv())
     enforce_policy(env, "bravo")
     try:
         enforce_policy(env, "charlie")
@@ -225,7 +225,7 @@ def test_policy_recipient_and_expiry():
     except PolicyError:
         pass
     env2 = seal_package("f", Policy(expires_at=int(time.time()) - 1),
-                        ct, ident._priv)
+                        ct, ident.raw_priv())
     try:
         enforce_policy(env2, "bravo")
         raise AssertionError("expired policy allowed")

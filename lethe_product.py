@@ -9,7 +9,7 @@ Run:  python lethe_product.py            (press ENTER between scenes)
       python lethe_product.py --auto     (no pauses, for recording)
 
 The NFC tap is simulated by a signed "tap message" in a field directory,
-because the hardware (rings / ACR122U) is on order -- the protocol is what
+because the rings are on order (reader skipped by decision) -- the protocol is what
 the demo proves, and the protocol is real.
 """
 
@@ -165,7 +165,7 @@ def main():
     ui.say("Alpha seals the package with a signed policy: Bravo may view it exactly once.")
     policy = Policy(max_views=1, recipient="officer-bravo", note="one view, then ash")
     cipher = open(enc, "rb").read()
-    env = seal_package("Officer_Alpha_Brief.txt.enc", policy, cipher, alpha._priv)
+    env = seal_package("Officer_Alpha_Brief.txt.enc", policy, cipher, alpha.raw_priv())
     env_path = os.path.join(WORK, "brief.envelope.json")
     env.save(env_path)
     ui.info("envelope policy", f"max_views={policy.max_views}  recipient={policy.recipient}  "

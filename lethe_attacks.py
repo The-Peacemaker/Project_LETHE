@@ -243,7 +243,7 @@ def attack_policy_edit():
     d = tempfile.mkdtemp()
     sender = DeviceIdentity("sender")
     ct = os.urandom(256)
-    env = seal_package("f.enc", Policy(max_views=1), ct, sender._priv)
+    env = seal_package("f.enc", Policy(max_views=1), ct, sender.raw_priv())
     env.policy.max_views = 999
     try:
         enforce_policy(env, "bob")
@@ -256,7 +256,7 @@ def attack_wrong_recipient():
     d = tempfile.mkdtemp()
     sender = DeviceIdentity("sender")
     ct = os.urandom(256)
-    env = seal_package("f.enc", Policy(recipient="bravo"), ct, sender._priv)
+    env = seal_package("f.enc", Policy(recipient="bravo"), ct, sender.raw_priv())
     try:
         enforce_policy(env, "charlie")
         report("Wrong recipient denied by policy", False)
@@ -269,7 +269,7 @@ def attack_expired():
     sender = DeviceIdentity("sender")
     ct = os.urandom(256)
     env = seal_package("f.enc", Policy(expires_at=int(time.time()) - 5),
-                       ct, sender._priv)
+                       ct, sender.raw_priv())
     try:
         enforce_policy(env, "bravo")
         report("Expired policy denied", False)

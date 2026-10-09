@@ -34,12 +34,29 @@ def _decrypt(scalar, blob):
 
 
 def _expect_point(blob, label):
-    pt = deserialize(blob)
+    try:
+        pt = deserialize(blob)
+    except ValueError as exc:
+        raise ProtocolError(f"{label} malformed: {exc}")
     if is_identity(pt):
         raise ProtocolError(f"{label} is the point at infinity")
     if not on_curve(pt):
         raise ProtocolError(f"{label} is not a valid point on the curve")
     return pt
+
+
+def _expect_pubkey(point, label):
+    """Registration-time key validation: on-curve and not infinity."""
+    if is_identity(point):
+        raise ProtocolError(f"{label} is the point at infinity")
+    if not on_curve(point):
+        raise ProtocolError(f"{label} is not a valid point on the curve")
+    return point
+
+
+def _require_card(device):
+    if device.card is None:
+        raise ProtocolError("device not provisioned -- registration first")
 
 
 # ------------------------------------------------------------------ tiny framing
@@ -53,9 +70,15 @@ def _frame(*fields):
 def _unframe(blob):
     parts = []
     i = 0
+    if not blob:
+        raise ProtocolError("empty message frame")
     while i < len(blob):
+        if i + 4 > len(blob):
+            raise ProtocolError("truncated frame header")
         (n,) = struct.unpack(">I", blob[i:i + 4])
         i += 4
+        if i + n > len(blob):
+            raise ProtocolError("truncated frame body")
         parts.append(blob[i:i + n])
         i += n
     return parts
@@ -80,12 +103,15 @@ class LocalServer:
         self.SKs, self.PLocal = keygen()          # server ECC keypair
         self.users = {}                           # UIDi -> {"P": PUser, "Ex": Ex}
         self.devices = {}                         # DIDi -> {"P": PDevice, "Ex": Ex}
-        self.sessions = {}                        # RID  -> ephemeral state
+        self.sessions = {}                        # RID  -> live ephemeral state
+        self.spent = set()                        # RIDs consumed (replay shield)
+        self.archive = {}                         # RID  -> finished session record
 
     # ---------------------------- registration: user device (QR) ----------------------------
     def register_user(self, UID, PUser, Ex):
         if UID in self.users:
             raise ProtocolError("UIDi already registered (duplicate registration rejected)")
+        _expect_pubkey(PUser, "PUser")
         self.users[UID] = {"P": PUser, "Ex": Ex}
         return self._token(UID, Ex)
 
@@ -93,6 +119,7 @@ class LocalServer:
     def register_device(self, DID, PDevice, Ex):
         if DID in self.devices:
             raise ProtocolError("DIDi already registered (duplicate registration rejected)")
+        _expect_pubkey(PDevice, "PDevice")
         self.devices[DID] = {"P": PDevice, "Ex": Ex}
         Tki = self._token(DID, Ex)
         credentials = _frame(Tki, _point_bytes(self.PLocal), Ex.to_bytes(EX_BYTES, "big"), self.SID)
@@ -123,7 +150,10 @@ class LocalServer:
     def _login(self, registry, M_blob):
         """Step 3 (server side). Returns message N encrypted for the client."""
         inner = _decrypt(self.SKs, M_blob)
-        RID, Gi_bytes, h_bi_sid = _unframe(inner)
+        parts = _unframe(inner)
+        if len(parts) != 3:
+            raise ProtocolError("message M must carry exactly (RID, Gi, h(bi||SID))")
+        RID, Gi_bytes, h_bi_sid = parts
         _expect_point(Gi_bytes, "Gi")
 
         recovered = self._recover(RID, Gi_bytes)
@@ -145,7 +175,10 @@ class LocalServer:
         return N_blob
 
     def user_finish(self, RID, P2, V_blob):
-        """Step 5 (server side). Verifies P2 via ECCDHP and decrypts the session key."""
+        """Step 5 (server side). Verifies P2 via ECCDHP, decrypts the session
+        key, then consumes the session -- a replayed step-5 is rejected."""
+        if RID in self.spent:
+            raise ProtocolError("session already consumed (step-5 replay rejected)")
         sess = self.sessions.get(RID)
         if sess is None:
             raise ProtocolError("no active session for RID (replay?)")
@@ -158,9 +191,14 @@ class LocalServer:
             raise ProtocolError("Gj integrity violation")
 
         inner = _decrypt(self.SKs, V_blob)
-        SK, Gi_back, Gj_back = _unframe(inner)
+        vparts = _unframe(inner)
+        if len(vparts) != 3:
+            raise ProtocolError("message V must carry exactly (SK, Gi, Gj)")
+        SK, Gi_back, Gj_back = vparts
         if not ct_eq(Gi_back, sess["Gi"]):
             raise ProtocolError("V tampered: Gi inside V does not match session")
+        self.spent.add(RID)
+        self.archive[RID] = self.sessions.pop(RID)
         return SK
 
 
@@ -182,6 +220,7 @@ class UserDevice:
     # ---------------------------- 5-step login authentication ----------------------------
     def login_step1(self):
         """Steps 1-2 (user side). Returns message M."""
+        _require_card(self)
         Ri = rand_scalar()
         Gi = mul(Ri, (GX, GY))
         Gi_bytes = _point_bytes(Gi)
@@ -198,6 +237,9 @@ class UserDevice:
 
     def login_step2(self, N_blob):
         """Step 4 (user side). Returns (P2, V) and the derived session key."""
+        _require_card(self)
+        if self._state is None:
+            raise ProtocolError("login_step1 must run before login_step2")
         inner = _decrypt(self.SKu, N_blob)
         P1, Gi_back, Gj_bytes = _unframe(inner)
         _expect_point(Gj_bytes, "Gj")
@@ -238,6 +280,7 @@ class IoMTDevice:
                      "PLocal": deserialize(PLocal_bytes)}
 
     def login_step1(self):
+        _require_card(self)
         Ri = rand_scalar()
         Gi = mul(Ri, (GX, GY))
         Gi_bytes = _point_bytes(Gi)
@@ -253,6 +296,9 @@ class IoMTDevice:
         return M_blob, RID
 
     def login_step2(self, N_blob):
+        _require_card(self)
+        if self._state is None:
+            raise ProtocolError("login_step1 must run before login_step2")
         inner = _decrypt(self.SKd, N_blob)
         P1, Gi_back, Gj_bytes = _unframe(inner)
         _expect_point(Gj_bytes, "Gj")
@@ -272,3 +318,5 @@ class IoMTDevice:
                                _frame(SK, self._state["Gi"], Gj_bytes))
         self._state["shared"] = shared
         return P2, V_blob, SK
+
+        

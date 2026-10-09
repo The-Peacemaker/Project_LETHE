@@ -73,17 +73,28 @@ class FSKE:
         info = FSKE_CTX + self._current.to_bytes(8, "big")
         hk = HKDF(algorithm=hashes.SHA256(), length=AES_LEN,
                   salt=self._session, info=info)
-        old = self._live
-        k = hk.derive(self._master)
-        if old is not None:
-            _wipe(old)
-        self._live = k
-        return k
+        if self._live is not None:
+            zero_buf(self._live)          # previous window genuinely wiped
+        self._live = bytearray(hk.derive(self._master))
+        return bytes(self._live)
+
+    def retire(self):
+        """Wipe the live sub-key. Call when the transfer ends."""
+        if self._live is not None:
+            zero_buf(self._live)
+            self._live = None
 
     @property
     def window(self) -> int:
         return self._current
 
 
-def _wipe(b: bytes) -> bytes:
-    return b"\x00" * (len(b) or 0x00)
+def zero_buf(buf: bytearray):
+    """Overwrite a mutable key buffer in place.
+
+    Honest limit: CPython may retain immutable copies elsewhere (copies handed
+    to AESGCM, GC arenas). This wipes the buffer we control; it is best
+    effort, not a memory-safety proof -- stated openly.
+    """
+    for i in range(len(buf)):
+        buf[i] = 0

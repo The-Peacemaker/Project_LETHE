@@ -8,3 +8,4 @@ run/
 *.tmp
 keyslot*
 .nfc_field/
+lethe/issuer.key

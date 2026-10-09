@@ -167,6 +167,42 @@ def main():
         server.user_login(M)
         return "off-curve point accepted"
 
+    # ------------------------------------------------ 11. Replay of a consumed step-5
+    def replay_step5():
+        server = LocalServer()
+        user = fresh_user(server, Ex)
+        Msg1, RID1 = user.login_step1()
+        N1 = server.user_login(Msg1)
+        P2, V, SK = user.login_step2(N1)
+        server.user_finish(RID1, P2, V)
+        server.user_finish(RID1, P2, V)   # identical replay must die here
+        return "consumed session accepted twice"
+
+    # ------------------------------------------------ 12. Truncated frame smuggling
+    def truncated_frame():
+        from basepaper.entities import _frame as _fr
+        server = LocalServer()
+        user = fresh_user(server, Ex)
+        bad_inner = _fr(b"\x00")          # valid encryption, invalid arity
+        bad_M = ecies_encrypt(server.PLocal, bad_inner)
+        server.user_login(bad_M)
+        return "malformed frame accepted"
+
+    # ------------------------------------------------ 13. Login without provisioning
+    def unprovisioned_login():
+        server = LocalServer()
+        stray = UserDevice()              # never registered, no smart card
+        Msg, _ = stray.login_step1()
+        server.user_login(Msg)
+        return "unprovisioned device spoke the protocol"
+
+    # ------------------------------------------------ 14. Off-curve registration key
+    def offcurve_registration():
+        server = LocalServer()
+        rogue = UserDevice()
+        server.register_user(rogue.UID, (1, 1), Ex)   # (1,1) not on the curve
+        return "off-curve public key registered"
+
     attempt("1.  Replay of message M", replay_M)
     attempt("2.  Replay of old (P2, V)", replay_P2V)
     attempt("3.  Forward secrecy (SK must differ per session)", forward_secrecy)
@@ -177,6 +213,10 @@ def main():
     attempt("8.  DoS -- duplicate registration", duplicate_registration)
     attempt("9.  Tamper -- corrupt V", tamper_V)
     attempt("10. Off-curve point Gi", offcurve_Gi)
+    attempt("11. Replay of a consumed step-5", replay_step5)
+    attempt("12. Truncated frame smuggling", truncated_frame)
+    attempt("13. Login without provisioning", unprovisioned_login)
+    attempt("14. Off-curve registration key", offcurve_registration)
 
     print("\nIf all entries are SAFE, the protocol resists these attacks.")
 

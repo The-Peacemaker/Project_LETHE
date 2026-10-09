@@ -4,7 +4,7 @@ The real system carries four things through the physical tap (an NDEF read
 at < 10 cm): receiver public key, nonce, session metadata, challenge.
 No file crosses this channel -- only trust information.
 
-Hardware: NFC rings / ACR122U are not purchased yet, so `NfcField` stands in
+Hardware: rings not yet procured (reader skipped by decision), so `NfcField` stands in
 for the electromagnetic field with a signed message file. The story on the
 demo slide is literally true: only trust information moves here.
 """
@@ -45,13 +45,24 @@ class NfcField:
         for name in os.listdir(self.path):
             os.unlink(os.path.join(self.path, name))
 
-    def take(self):
-        """Pick up the latest message left in the field."""
+    def take(self, expected_tag=None):
+        """Pick up a message from the field.
+
+        With `expected_tag` ("tap1" or "tap2") only that message is accepted --
+        the handshake can never read its own echo back by filename luck.
+        """
         names = sorted(os.listdir(self.path))
+        if expected_tag is not None:
+            names = [n for n in names if n == expected_tag + ".json"]
+            if not names:
+                raise TapError(f"field holds no {expected_tag} -- tap missing or out of order")
         if not names:
             raise TapError("field is empty -- no tap detected")
-        with open(os.path.join(self.path, names[-1])) as f:
-            return TapMessage.from_dict(json.load(f))
+        try:
+            with open(os.path.join(self.path, names[-1])) as f:
+                return TapMessage.from_dict(json.load(f))
+        except (OSError, ValueError, KeyError) as exc:
+            raise TapError(f"tap message unreadable: {exc}")
 
 
 class TapMessage:

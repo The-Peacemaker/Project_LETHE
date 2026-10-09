@@ -99,7 +99,7 @@ def derive(dev: LetheDevice, eph, peer_pub: bytes, session_id: bytes,
 
 def receive_tap(dev: LetheDevice, field: NfcField):
     """Receiver taps back: verify peer, sign the challenge, close the loop."""
-    msg = field.take()
+    msg = field.take("tap1")
     dev._audit(msg)
     eph = new_eph()
     response = dev.identity.sign(msg.challenge)          # proof of keystore
@@ -122,7 +122,7 @@ def receive_tap(dev: LetheDevice, field: NfcField):
 def complete_handshake(sender: LetheDevice, field: NfcField, sender_eph,
                        original: TapMessage):
     """Sender verifies the answer; both sides now hold the identical key."""
-    msg = field.take()
+    msg = field.take("tap2")
     if msg.tag != "tap2":
         raise HandshakeError("expected a tap2 answer")
     if msg.meta.get("receiver") != sender.name:

@@ -39,7 +39,7 @@ class KeySlot:
         self.expires_at = expires_at
         self.created = int(time.time())
         self.views = 0
-        self._key = aes_key
+        self._key = bytearray(aes_key)     # mutable: destroy() truly zeroes it
         self._persist()
 
     # ---------------------------------------------------------- storage
@@ -66,13 +66,13 @@ class KeySlot:
         slot = KeySlot.__new__(KeySlot)
         slot.path, slot.created = path, created
         slot.views, slot.max_views, slot.expires_at = views, max_views, expires or None
-        slot._key = key
+        slot._key = bytearray(key)
         return slot
 
     # ---------------------------------------------------------- lifecycle
     @property
     def live(self):
-        return self._key != b"" and self._key != b"\x00" * 32
+        return len(self._key) == 32 and any(self._key)
 
     def try_view(self):
         """Consume one view; if the policy is exhausted, the key shreds itself."""
@@ -86,12 +86,13 @@ class KeySlot:
             raise AccessError(ACCESS_DENIED)
         self.views += 1
         self._persist()
-        return self._key
+        return bytes(self._key)
 
     def destroy(self, reason=None):
         """Wipe the buffer, zero the slot file, unlink. The math is gone."""
+        from lethe.keys import zero_buf
         if self._key:
-            self._key = shred(self._key)
+            zero_buf(self._key)
         try:
             with open(self.path, "wb") as f:
                 f.write(b"\x00" * 64)

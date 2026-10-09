@@ -1,7 +1,7 @@
 """Phase 2: Ring Initialisation (NTAG215) -- the ring is a key, not a container.
 
 Exactly four fields are written to the (approximately) 504 usable bytes of an
-NTAG215 tag, here serialised to 96 bytes:
+NTAG215 tag, here serialised to 128 bytes:
 
   Owner ID           |  16 bytes | UUID for this ring
   Device Public Key  |  32 bytes | ed25519 public key
@@ -36,10 +36,30 @@ REC = 16
 SIG = 64
 LAYOUT = f"!{OWNER}s{DEVPUB}s{REC}s{SIG}s"   # 96 bytes packed
 
-# The LETHE issuing authority (simulated `provisioning script` on the laptop).
-# A real build ships only ISSUER_PUB inside the app; the private half never
-# leaves the factory laptop. Generated here so the demo is self-contained.
-_ISSUER = Ed25519PrivateKey.generate()
+# The LETHE issuing authority (the factory provisioning laptop).
+# The private half persists in `issuer.key` beside this package (owner-only
+# permissions, git-ignored); a real build ships only ISSUER_PUB inside the app.
+# Persistence means rings provisioned in one run verify in any later run.
+_ISSUER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "issuer.key")
+
+
+def _load_issuer():
+    if os.path.exists(_ISSUER_PATH):
+        with open(_ISSUER_PATH, "rb") as f:
+            return Ed25519PrivateKey.from_private_bytes(f.read(32))
+    key = Ed25519PrivateKey.generate()
+    with open(_ISSUER_PATH, "wb") as f:
+        f.write(key.private_bytes(RAW, serialization.PrivateFormat.Raw,
+                                  serialization.NoEncryption()))
+    try:
+        os.chmod(_ISSUER_PATH, 0o600)
+    except OSError:
+        pass
+    return key
+
+
+_ISSUER = _load_issuer()
 ISSUER_PRIV = _ISSUER.private_bytes(RAW, serialization.PrivateFormat.Raw,
                                     serialization.NoEncryption())
 ISSUER_PUB = _ISSUER.public_key().public_bytes(RAW, serialization.PublicFormat.Raw)
@@ -74,7 +94,7 @@ class Ring:
 
     # ------------------------------------------------------------- bytes
     def pack(self) -> bytes:
-        """96-byte payload -- comfortably inside the 504-byte NTAG215 area."""
+        """128-byte payload -- comfortably inside the 504-byte NTAG215 area."""
         return struct.pack(LAYOUT, self.owner_id, self.device_pub,
                            self.recovery_hash, self.signature)
 
@@ -111,7 +131,7 @@ class Ring:
 
 def provision_ring(device: DeviceIdentity, recovery_code: str,
                    issuer_priv: bytes = ISSUER_PRIV) -> Ring:
-    """Provision a ring for `device` (run once, via the ACR122U laptop).
+    """Provision a ring for `device` (run once, via the factory laptop or an NFC phone).
 
     Signature = issuer.sign(owner_id || device_pub || recovery_hash).
     """

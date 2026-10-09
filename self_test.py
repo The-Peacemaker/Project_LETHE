@@ -14,7 +14,7 @@ import time
 
 from basepaper import (
     LocalServer, UserDevice, IoMTDevice, ProtocolError,
-    mul, add, serialize, deserialize, GX, GY, N, P, A, B,
+    mul, add, serialize, deserialize, GX, GY, N, P, A, B, INF,
     on_curve, is_identity, rand_scalar, h, h_ext, xor_bytes, ct_eq,
 )
 
@@ -28,6 +28,8 @@ def test_group_laws():
     rhs = mul((a + b) % N, (GX, GY))
     assert lhs == rhs, "distributive law violated"
     assert on_curve(mul(a + b + c, (GX, GY))), "resulting point not on curve"
+    assert is_identity(mul(7, INF)), "scalar times infinity must be infinity"
+    assert mul(-1, (GX, GY)) == mul(N - 1, (GX, GY)), "negative scalars reduce mod N"
     print("  [ok] brainpoolP256r1 group laws")
 
 
@@ -84,7 +86,6 @@ def test_registration_encryption():
     Ex = int(time.time()) + 3600
     device = IoMTDevice()
     blob = server.register_device(device.DID, device.PDevice, Ex)
-    device._card_bits_never_exposed = True
     assert blob != b"", "BLE registration blob empty"
     print("  [ok] IoMT BLE registration decrypts only with device private key")
 

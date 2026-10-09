@@ -97,8 +97,11 @@ class Transfer:
                 fout.write(piece)
                 digest.update(piece)
                 n += 1
-        with open(src + ".sha", "r") as f:
-            expected = f.read().strip()
+        try:
+            with open(src + ".sha", "r") as f:
+                expected = f.read().strip()
+        except OSError:
+            raise TransferError("integrity manifest missing -- file rejected")
         actual = digest.hexdigest()
         if expected != actual:
             raise TransferError("integrity hash mismatch -- file rejected")
@@ -114,11 +117,17 @@ class Transfer:
 
 def seal_file(aes_key: bytes, src: str, dst: str):
     t = Transfer(aes_key)
-    for _ in t.seal_stream(src, dst):
-        pass
+    try:
+        for _ in t.seal_stream(src, dst):
+            pass
+    except OSError as exc:
+        raise TransferError(f"cannot read plaintext file: {exc}")
 
 
 def open_file(aes_key: bytes, src: str, dst: str):
     t = Transfer(aes_key)
-    n, h = t.open_stream(src, dst)
+    try:
+        n, h = t.open_stream(src, dst)
+    except OSError as exc:
+        raise TransferError(f"cannot read sealed file: {exc}")
     return n, h
