@@ -21,10 +21,12 @@ client-side code can enforce -- stated openly in the threat model.
   12. View-limit exceeded             -> key crypto-shredded (NIST 800-88)
   13. Weak tap (AOTBC trust < 0.7)    -> rejected fail-closed at the gate
   14. Cloned ring alone               -> cannot answer the challenge
+  15. Malformed / truncated tap       -> strict decoding rejects, fails closed
 
 After every rejected attempt the protocol is still usable -- no state break.
 """
 
+import json
 import os
 import tempfile
 import time
@@ -55,6 +57,15 @@ def report(name, blocked):
 def field():
     d = tempfile.mkdtemp()
     return NfcField(os.path.join(d, "field"))
+
+
+def _rejects(fn) -> bool:
+    """True iff the call fails closed with an exception (never succeeds)."""
+    try:
+        fn()
+        return False
+    except Exception:
+        return True
 
 
 def peers():
@@ -175,7 +186,6 @@ def attack_replay(da, db):
 
 def attack_stale(da, db):
     f = field()
-    import json
     eph = new_eph()
     stale = sign_message("tap1", "alice", da.identity, da.ring,
                          eph_pub_bytes(eph), os.urandom(16), os.urandom(32),
@@ -194,7 +204,6 @@ def attack_mitm_tap_edit(da, db):
     eph, m1 = bootstrap_tap(da, f, "bob")
     m1.eph_pub = eph_pub_bytes(new_eph())              # tamper without re-sign
     p = f.path
-    import json
     with open(os.path.join(p, os.listdir(p)[-1]), "w") as fh:
         json.dump(m1.to_dict(), fh)
     try:
@@ -240,6 +249,32 @@ def attack_cloned_ring(da, db):
         report("Cloned ring + alien keystore cannot authenticate", False)
     except HandshakeError:
         report("Cloned ring + alien keystore cannot authenticate", True)
+
+
+def attack_malformed(da, db):
+    """Non-JSON and structurally-truncated taps must fail closed, not open.
+
+    Two negative-input classes: (a) the field holds bytes that are not JSON at
+    all; (b) the field holds well-formed JSON whose ring image is truncated.
+    Neither may yield a session -- each must raise and leave no key material.
+    """
+    import base64 as _b
+
+    f = field()
+    with open(os.path.join(f.path, "tap1.json"), "w") as fh:
+        fh.write("<<not a tap message>>")
+    bad_json = _rejects(lambda: receive_tap(db, f))
+
+    f2 = field()
+    _, m1 = bootstrap_tap(da, f2, "bob")
+    d = m1.to_dict()
+    d["ring"] = _b.b64encode(b"short").decode()          # truncated ring image
+    with open(os.path.join(f2.path, "tap1.json"), "w") as fh:
+        json.dump(d, fh)
+    short_ring = _rejects(lambda: receive_tap(db, f2))
+
+    report("Malformed / truncated tap rejected (strict decoding, fails closed)",
+           bad_json and short_ring)
 
 
 # ------------------------------------------------------------- policy
@@ -309,6 +344,7 @@ def main():
     attack_mitm_tap_edit(da, db)
     attack_weak_tap(da, db)
     attack_cloned_ring(da, db)
+    attack_malformed(da, db)
     attack_policy_edit()
     attack_wrong_recipient()
     attack_expired()

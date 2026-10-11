@@ -31,8 +31,8 @@ flowchart LR
 pip install -r requirements.txt
 python lethe_product.py        # 8-scene cinematic demo, ENTER steps through scenes
 python lethe_product.py --auto # straight run, for recording
-python lethe_self_test.py      # 14 protocol invariants, green
-python lethe_attacks.py        # 14 attacks, all blocked
+python lethe_self_test.py      # 15 protocol invariants, green
+python lethe_attacks.py        # 15 attacks, all blocked
 ```
 
 ## Two terminals, two devices (the evaluator run)
@@ -126,7 +126,7 @@ flowchart TB
     ADV -.->|out of scope, stated openly| OOS[device malware · coercion without duress PIN · side channels · quantum]
 ```
 
-Full battery in `lethe_attacks.py` — 14 blocked, 0 breaches. Honest limitations documented alongside, per the security model: device compromise, physical coercion, side channels, and quantum adversaries are outside the stated threat model.
+Full battery in `lethe_attacks.py` — 15 blocked, 0 breaches. Honest limitations documented alongside, per the security model: device compromise, physical coercion, side channels, and quantum adversaries are outside the stated threat model.
 
 ## Grounding: the base paper, reproduced
 
@@ -142,7 +142,7 @@ python self_test.py  # group laws, ECCDHP, forward secrecy
 ## Status
 
 - [x] Base paper: 5-step mutual auth, ECCDHP key agreement, single-use sessions, 14/14 attacks rejected
-- [x] LETHE phases 1–9 running on PC: 14/14 self-tests, 14/14 attacks blocked
+- [x] LETHE phases 1–9 running on PC: 15/15 self-tests, 15/15 attacks blocked (incl. malformed/truncated tap)
 - [ ] NFC rings to procure; ACR122U reader deliberately skipped (phone provisioning, never in ceremony): `NfcField` is the seam the real tap drops into
 - [ ] Wi-Fi Direct socket, Android shell, TERA attestation, CoRDe duress PIN, Tamarin model
 
