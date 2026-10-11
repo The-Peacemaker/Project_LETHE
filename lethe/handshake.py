@@ -27,8 +27,10 @@ from lethe.tap import NfcField, TapMessage, sign_message
 from lethe.identity import DeviceIdentity
 
 TP_WINDOW = 60           # seconds a tap stays fresh
-REPLAY_MEMORY = 128      # nonces remembered per peer
-AOTBC_MIN = 0.7          # below this, the tap demands an extra round
+REPLAY_MEMORY = 128      # nonces remembered per peer (FIFO)
+AOTBC_MIN = 0.7          # admission gate: below this the tap is rejected
+                         # fail-closed. No extra round exists in this build;
+                         # the score never enters key derivation.
 
 
 class HandshakeError(Exception):
@@ -42,14 +44,14 @@ class LetheDevice:
         self.name = name
         self.identity = identity
         self.ring = ring
-        self._seen_nonces = set()
+        self._seen_nonces = {}   # ordered dict: nonce -> None (FIFO eviction)
         self._keys = {"session_id": None, "aes": None}
 
     # ------------------------------------------------------------ helpers
     def _remember(self, nonce):
-        self._seen_nonces.add(nonce)
-        if len(self._seen_nonces) > REPLAY_MEMORY:
-            self._seen_nonces.pop()
+        self._seen_nonces[nonce] = None
+        while len(self._seen_nonces) > REPLAY_MEMORY:
+            self._seen_nonces.pop(next(iter(self._seen_nonces)))  # oldest first
 
     def _audit(self, msg: TapMessage):
         if not msg.ring.verify(ISSUER_PUB):
@@ -64,7 +66,8 @@ class LetheDevice:
         if trust < AOTBC_MIN:
             raise HandshakeError(
                 f"AOTBC: trust score {trust:.2f} < {AOTBC_MIN:.1f} -- "
-                "extra verification round mandated")
+                "tap rejected fail-closed (admission gate; no extra round "
+                "in this build)")
         self._remember(msg.nonce)
 
 
@@ -89,11 +92,10 @@ def bootstrap_tap(dev: LetheDevice, field: NfcField, receiver_id: str,
     return eph, msg
 
 
-def derive(dev: LetheDevice, eph, peer_pub: bytes, session_id: bytes,
-           trust: float):
+def derive(dev: LetheDevice, eph, peer_pub: bytes, session_id: bytes):
     secret = shared_x25519(eph, peer_pub)
     dev._keys = {"session_id": session_id,
-                 "aes": derive_aes_keys(secret, session_id, trust)}
+                 "aes": derive_aes_keys(secret, session_id)}
     return dev._keys["aes"]
 
 
@@ -114,8 +116,7 @@ def receive_tap(dev: LetheDevice, field: NfcField):
         response=response)
     field.put(reply)
     aes = derive(dev, eph, msg.eph_pub,
-                 bytes.fromhex(msg.meta["session"]),
-                 float(msg.meta.get("trust_score", 1.0)))
+                 bytes.fromhex(msg.meta["session"]))
     return reply, aes
 
 
@@ -140,6 +141,5 @@ def complete_handshake(sender: LetheDevice, field: NfcField, sender_eph,
     except Exception:
         raise HandshakeError("challenge-response failed -- authentication rejected")
     aes = derive(sender, sender_eph, msg.eph_pub,
-                 bytes.fromhex(msg.meta["session"]),
-                 float(msg.meta.get("trust_score", 1.0)))
+                 bytes.fromhex(msg.meta["session"]))
     return aes, sender._keys["session_id"]

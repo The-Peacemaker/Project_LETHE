@@ -51,34 +51,49 @@ class Transfer:
             raise TransferError("chunk tag failed -- file was tampered in flight")
 
     # ------------------------------------------------------------ streams
-    def seal_stream(self, src, dst, fske=None):
+    def seal_stream(self, src, dst):
         """Read `src`, write sealed frames to `dst`. Yields per-chunk stats.
 
-        With `fske` (a ``lethe.keys.FSKE``) every chunk is sealed by its own
-        forward-secure sub-key -- key_{i-1} is already wiped by the time
-        chunk i is written.
+        One session key seals every chunk; each chunk carries a fresh 96-bit
+        nonce. The `.sha` manifest beside the sealed file is SHA-256 over the
+        *ciphertext* (never the plaintext), so it leaks no plaintext oracle.
         """
-        digest = hashlib.sha256()
         n = 0
         with open(src, "rb") as fin, open(dst, "wb") as fout:
             while True:
                 piece = fin.read(CHUNK)
                 if not piece:
                     break
-                digest.update(piece)
-                key = fske.next_key() if fske is not None else None
-                box = AESGCM(key) if key is not None else self.box
                 nonce = os.urandom(NONCE)
-                sealed = box.encrypt(nonce, piece, None)
+                sealed = self.box.encrypt(nonce, piece, None)
                 fout.write(nonce + struct.pack(">I", len(sealed)) + sealed)
                 n += 1
                 yield n, len(piece)
+        digest = hashlib.sha256()
+        with open(dst, "rb") as f:
+            for blk in iter(lambda: f.read(1 << 16), b""):
+                digest.update(blk)
         open(dst + ".sha", "w").write(digest.hexdigest())
         return n
 
-    def open_stream(self, src, dst, fske=None):
-        """Read sealed frames from `src`, verified bytes to `dst`."""
+    def open_stream(self, src, dst):
+        """Read sealed frames from `src`, verified bytes to `dst`.
+
+        The ciphertext manifest is checked *before* any decryption, then every
+        chunk tag is verified during the open. Either check failing rejects
+        the whole file -- fail-closed.
+        """
         digest = hashlib.sha256()
+        with open(src, "rb") as f:
+            for blk in iter(lambda: f.read(1 << 16), b""):
+                digest.update(blk)
+        try:
+            with open(src + ".sha", "r") as f:
+                expected = f.read().strip()
+        except OSError:
+            raise TransferError("integrity manifest missing -- file rejected")
+        if expected != digest.hexdigest():
+            raise TransferError("ciphertext manifest mismatch -- file rejected")
         n = 0
         with open(src, "rb") as fin, open(dst, "wb") as fout:
             while True:
@@ -91,21 +106,10 @@ class Transfer:
                 body = fin.read(ln)
                 if len(body) != ln:
                     raise TransferError("truncated frame body")
-                piece = self._open_chunk(nonce + struct.pack(">I", ln) + body,
-                                         box=AESGCM(fske.next_key())
-                                         if fske is not None else None)
+                piece = self._open_chunk(nonce + struct.pack(">I", ln) + body)
                 fout.write(piece)
-                digest.update(piece)
                 n += 1
-        try:
-            with open(src + ".sha", "r") as f:
-                expected = f.read().strip()
-        except OSError:
-            raise TransferError("integrity manifest missing -- file rejected")
-        actual = digest.hexdigest()
-        if expected != actual:
-            raise TransferError("integrity hash mismatch -- file rejected")
-        return n, actual
+        return n, digest.hexdigest()
 
     # ------------------------------------------------------------ raw pipe
     def seal(self, plaintext: bytes) -> bytes:

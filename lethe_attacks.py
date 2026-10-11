@@ -2,21 +2,25 @@
 
 Run:  python lethe_attacks.py
 
-Resistance within the stated threat model (never "unhackable"):
-  1. Wiretap: ciphertext is AES-256-GCM noise, key never on the channel
-  2. Tampered file chunk in flight   -> tag fails, file rejected
-  3. Wrong session key               -> decryption refuses
-  4. Forged tap (rogue ring)         -> issuer signature invalid
-  5. Signature-only forgery          -> attacker lacks the keystore key
-  6. Replay of an old tap            -> nonce remembered, rejected
-  7. Stale / replayed timestamp      -> outside the freshness window
-  8. MITM editing the tap            -> signature invalidated
-  9. Policy edit post-encryption     -> PCCP signature invalidated
- 10. Wrong recipient                 -> policy denies
- 11. Expired policy                  -> policy denies
- 12. View-limit exceeded             -> key crypto-shredded (NIST 800-88)
- 13. Weak tap (AOTBC trust < 0.7)    -> extra verification round mandated
- 14. Cloned ring alone               -> cannot answer the challenge
+Resistance within the stated threat model (never "unhackable").
+Enforcement assumes a cooperating viewer runtime: the battery runs the
+real gate (enforce_policy, KeySlot) as a trusted local runtime would.
+A captured or malicious endpoint that skips the gate is outside what
+client-side code can enforce -- stated openly in the threat model.
+   1. Wiretap: ciphertext is AES-256-GCM noise, key never on the channel
+   2. Tampered file chunk in flight   -> manifest/tag fails, file rejected
+   3. Wrong session key               -> decryption refuses
+   4. Forged tap (rogue ring)         -> issuer signature invalid
+   5. Signature-only forgery          -> attacker lacks the keystore key
+   6. Replay of an old tap            -> nonce remembered, rejected
+   7. Stale / replayed timestamp      -> outside the freshness window
+   8. MITM editing the tap            -> signature invalidated
+   9. Policy edit post-encryption     -> PCCP signature invalidated
+  10. Wrong recipient                 -> policy denies
+  11. Expired policy                  -> policy denies
+  12. View-limit exceeded             -> key crypto-shredded (NIST 800-88)
+  13. Weak tap (AOTBC trust < 0.7)    -> rejected fail-closed at the gate
+  14. Cloned ring alone               -> cannot answer the challenge
 
 After every rejected attempt the protocol is still usable -- no state break.
 """
@@ -98,9 +102,9 @@ def attack_tamper(da, db):
         fh.write(os.urandom(1))
     try:
         open_file(key, enc, os.path.join(d, "dec"))
-        report("Tampered chunk rejected by its own GCM tag", False)
+        report("Tampered file rejected by ciphertext manifest / GCM tag", False)
     except TransferError:
-        report("Tampered chunk rejected by its own GCM tag", True)
+        report("Tampered file rejected by ciphertext manifest / GCM tag", True)
 
 
 def attack_wrong_key(da, db):
@@ -210,10 +214,10 @@ def attack_weak_tap(da, db):
     f.put(weak)
     try:
         receive_tap(db, f)
-        report("Weak tap pushed to extra verification round (AOTBC)", False)
+        report("Weak tap rejected fail-closed by the AOTBC admission gate", False)
     except HandshakeError as exc:
-        report("Weak tap pushed to extra verification round (AOTBC)",
-               "extra" in str(exc).lower())
+        report("Weak tap rejected fail-closed by the AOTBC admission gate",
+               "fail-closed" in str(exc).lower())
 
 
 def attack_cloned_ring(da, db):

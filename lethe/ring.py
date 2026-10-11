@@ -34,35 +34,58 @@ OWNER = 16
 DEVPUB = 32
 REC = 16
 SIG = 64
-LAYOUT = f"!{OWNER}s{DEVPUB}s{REC}s{SIG}s"   # 96 bytes packed
+LAYOUT = f"!{OWNER}s{DEVPUB}s{REC}s{SIG}s"   # 128 bytes packed
 
 # The LETHE issuing authority (the factory provisioning laptop).
-# The private half persists in `issuer.key` beside this package (owner-only
-# permissions, git-ignored); a real build ships only ISSUER_PUB inside the app.
-# Persistence means rings provisioned in one run verify in any later run.
-_ISSUER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                            "issuer.key")
+# Trust split: verifiers need ONLY the public half. `issuer.key` (private,
+# owner-only, git-ignored) is touched solely by provision_ring(); every other
+# path -- including verification on a receiving device -- uses `issuer.pub`.
+# A shipped build therefore carries the public key file alone, never the
+# private key. Persistence means rings provisioned in one run verify in later
+# runs on any machine holding the same public key.
+_ISSUER_DIR = os.path.dirname(os.path.abspath(__file__))
+_ISSUER_PRIV_PATH = os.path.join(_ISSUER_DIR, "issuer.key")
+_ISSUER_PUB_PATH = os.path.join(_ISSUER_DIR, "issuer.pub")
 
 
-def _load_issuer():
-    if os.path.exists(_ISSUER_PATH):
-        with open(_ISSUER_PATH, "rb") as f:
+def _load_issuer_priv():
+    """Private half -- provisioning only. Never import this elsewhere."""
+    if os.path.exists(_ISSUER_PRIV_PATH):
+        with open(_ISSUER_PRIV_PATH, "rb") as f:
             return Ed25519PrivateKey.from_private_bytes(f.read(32))
     key = Ed25519PrivateKey.generate()
-    with open(_ISSUER_PATH, "wb") as f:
+    with open(_ISSUER_PRIV_PATH, "wb") as f:
         f.write(key.private_bytes(RAW, serialization.PrivateFormat.Raw,
                                   serialization.NoEncryption()))
     try:
-        os.chmod(_ISSUER_PATH, 0o600)
+        os.chmod(_ISSUER_PRIV_PATH, 0o600)
     except OSError:
         pass
+    _write_issuer_pub(key)
     return key
 
 
-_ISSUER = _load_issuer()
-ISSUER_PRIV = _ISSUER.private_bytes(RAW, serialization.PrivateFormat.Raw,
-                                    serialization.NoEncryption())
-ISSUER_PUB = _ISSUER.public_key().public_bytes(RAW, serialization.PublicFormat.Raw)
+def _write_issuer_pub(key):
+    with open(_ISSUER_PUB_PATH, "wb") as f:
+        f.write(key.public_key().public_bytes(RAW,
+                                              serialization.PublicFormat.Raw))
+
+
+def _load_issuer_pub() -> bytes:
+    """Public half -- the only issuer material a verifying device needs."""
+    if os.path.exists(_ISSUER_PUB_PATH):
+        with open(_ISSUER_PUB_PATH, "rb") as f:
+            return f.read(32)
+    if os.path.exists(_ISSUER_PRIV_PATH):
+        with open(_ISSUER_PRIV_PATH, "rb") as f:
+            key = Ed25519PrivateKey.from_private_bytes(f.read(32))
+    else:
+        key = _load_issuer_priv()   # first run ever: create the pair
+    _write_issuer_pub(key)          # pin the public half for clones/verifiers
+    return key.public_key().public_bytes(RAW, serialization.PublicFormat.Raw)
+
+
+ISSUER_PUB = _load_issuer_pub()
 
 
 def _issuer_verifier():
@@ -130,13 +153,17 @@ class Ring:
 
 
 def provision_ring(device: DeviceIdentity, recovery_code: str,
-                   issuer_priv: bytes = ISSUER_PRIV) -> Ring:
+                   issuer_priv: bytes = None) -> Ring:
     """Provision a ring for `device` (run once, via the factory laptop or an NFC phone).
 
     Signature = issuer.sign(owner_id || device_pub || recovery_hash).
+    The issuer private key is loaded here and only here.
     """
     owner_id = os.urandom(16)
     recovery_hash = hashlib.sha256(recovery_code.encode()).digest()[:REC]
     canon = owner_id + device.public + recovery_hash
+    if issuer_priv is None:
+        issuer_priv = _load_issuer_priv().private_bytes(
+            RAW, serialization.PrivateFormat.Raw, serialization.NoEncryption())
     sig = Ed25519PrivateKey.from_private_bytes(issuer_priv).sign(canon)
     return Ring(owner_id, device.public, recovery_hash, sig)

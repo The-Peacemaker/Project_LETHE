@@ -2,14 +2,18 @@
 
                     X25519 ECDH                HKDF-SHA256
   eph_priv + peer_pub  --->  shared_secret  --->  AES-256 session key
-                          (never transmitted)
+                           (never transmitted)
 
-Both devices derive the identical key independently. Fork of the master key
-implements FSKE (Forward-Secure Session Key Evolution): sub-key i only opens
-chunk i, and previous sub-keys are discarded.
+Both devices derive the identical key independently: the HKDF inputs are
+the shared secret and the session identifier only, so any two peers that
+complete the same tap necessarily agree. Trust scoring lives one layer up
+as an admission gate in the handshake -- it never enters key derivation,
+because asymmetric inputs would silently fork the key (see history).
+
+Per-chunk key evolution (ratcheted FSKE) is designed but NOT enabled in
+this prototype: the flight uses one session key with a fresh 96-bit GCM
+nonce per 64 KB chunk. A ratchet is future work for multi-file sessions.
 """
-
-import os
 
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric.x25519 import (
@@ -20,7 +24,6 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 AES_LEN = 32
 CTX = b"LETHE:AES256-GCM:v1"
-FSKE_CTX = b"LETHE:FSKE:v1"
 
 
 def new_eph():
@@ -33,60 +36,31 @@ def eph_pub_bytes(eph_priv) -> bytes:
 
 
 def shared_x25519(eph_priv, peer_pub_bytes: bytes) -> bytes:
-    """ECDH shared secret (32 bytes). Peer key validated on the curve."""
+    """ECDH shared secret (32 bytes).
+
+    Rejects malformed peers and the all-zero shared secret per RFC 7748:
+    a low-order or zero peer public value must never yield a usable key.
+    """
     if len(peer_pub_bytes) != 32:
         raise ValueError("X25519 public keys are 32 bytes")
+    if peer_pub_bytes == b"\x00" * 32:
+        raise ValueError("X25519 peer public key must not be all zero")
     peer = X25519PublicKey.from_public_bytes(peer_pub_bytes)
-    return eph_priv.exchange(peer)
+    shared = eph_priv.exchange(peer)
+    if shared == b"\x00" * 32:
+        raise ValueError("X25519 shared secret is all zero -- aborting")
+    return shared
 
 
-def derive_aes_keys(shared_secret: bytes, session_id: bytes,
-                    trust_score: float = 1.0):
+def derive_aes_keys(shared_secret: bytes, session_id: bytes):
     """HKDF the shared secret down to the AES-256 session key.
 
-    Determinisic function of (secret, session_id) -- both sides agree.
-    `trust_score` is bound in so a low-trust tap yields a different key and,
-    per AOTBC, forces an extra verification round upstream.
+    Deterministic function of (secret, session_id) only -- both sides agree
+    by construction, regardless of any admission-gate scoring upstream.
     """
-    salt = session_id
-    info = CTX + int(round(trust_score * 1000)).to_bytes(4, "big")
-    hk = HKDF(algorithm=hashes.SHA256(), length=AES_LEN, salt=salt, info=info)
+    hk = HKDF(algorithm=hashes.SHA256(), length=AES_LEN,
+              salt=session_id, info=CTX)
     return hk.derive(shared_secret)
-
-
-class FSKE:
-    """Forward-Secure Session Key Evolution.
-
-    key_i = HKDF(master, salt=session_id, info="FSKE:chunk:%d") -- each 64 KB
-    chunk is opened only by its own sub-key; generating key_{i+1} discards
-    key_i so compromise of one window never exposes the rest.
-    """
-
-    def __init__(self, master: bytes, session_id: bytes):
-        self._master = master
-        self._session = session_id
-        self._current = -1
-        self._live = None
-
-    def next_key(self) -> bytes:
-        self._current += 1
-        info = FSKE_CTX + self._current.to_bytes(8, "big")
-        hk = HKDF(algorithm=hashes.SHA256(), length=AES_LEN,
-                  salt=self._session, info=info)
-        if self._live is not None:
-            zero_buf(self._live)          # previous window genuinely wiped
-        self._live = bytearray(hk.derive(self._master))
-        return bytes(self._live)
-
-    def retire(self):
-        """Wipe the live sub-key. Call when the transfer ends."""
-        if self._live is not None:
-            zero_buf(self._live)
-            self._live = None
-
-    @property
-    def window(self) -> int:
-        return self._current
 
 
 def zero_buf(buf: bytearray):

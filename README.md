@@ -106,7 +106,7 @@ The ring is a key, not a container. A photograph is 3,000,000 bytes; the ring co
 | 2 | `lethe/ring.py` | Provisioning, 128 B packing, issuer attestation |
 | 3 | `lethe/tap.py` | `NfcField` — signed tap messages; replay window + nonce memory |
 | 4 + 5 | `lethe/handshake.py` | Challenge-response auth + session-key agreement |
-| 5 | `lethe/keys.py` | ECDH, HKDF derivation, FSKE forward-secure sub-keys per chunk |
+| 5 | `lethe/keys.py` | ECDH, HKDF derivation (trust-independent); per-chunk ratchet designed, not enabled |
 | 6 + 7 | `lethe/transfer.py` | AES-256-GCM 64 KB frames `nonce(12)‖len(4)‖ct(+16 tag)`, verified per chunk |
 | 8 | `lethe/policy.py` | PCCP signed envelope: `max_views`, `expires_at`, `recipient`, destruction mode |
 | 9 | `lethe/erasure.py` | Self-wiping key slot: buffer zeroed, slot file wiped + unlinked |

@@ -1,14 +1,15 @@
 """LETHE core-brain self-tests.
 
-Verifies the invariants the whole product leans on:
-  - ed25519 identity sign/verify roundtrip (Phase 1)
-  - ring provisioning: issuer signature, pack/unpack, 504-byte bound (Phase 2)
-  - signed tap integrity + replay/timestamp audit (Phase 3)
-  - mutual auth: challenge-response, independent key agreement (Phase 4/5)
-  - session keys are agreed independently and unique per session
-  - FSKE forward-secure sub-keys never overlap
-  - policy engine: signature, integrity, expiry, recipient (Phase 8)
-  - crypto-shredding: view-limit and expiry destroy the key for good (Phase 9)
+ Verifies the invariants the whole product leans on:
+   - ed25519 identity sign/verify roundtrip (Phase 1)
+   - ring provisioning: issuer signature, pack/unpack, 504-byte bound (Phase 2)
+   - signed tap integrity + replay/timestamp audit (Phase 3)
+   - mutual auth: challenge-response, independent key agreement (Phase 4/5)
+   - session keys are agreed independently and unique per session,
+     identically at every admission-gate trust level
+   - X25519 peer validation: zero keys rejected
+   - policy engine: signature, integrity, expiry, recipient (Phase 8)
+   - crypto-shredding: view-limit and expiry destroy the key for good (Phase 9)
 
 Run:  python lethe_self_test.py
 """
@@ -22,7 +23,7 @@ from lethe.ring import Ring, provision_ring, RING_MAX_BYTES, ISSUER_PUB
 from lethe.tap import NfcField, sign_message, verify_message, TapError
 from lethe.handshake import (LetheDevice, bootstrap_tap, receive_tap,
                              complete_handshake, HandshakeError)
-from lethe.keys import FSKE, derive_aes_keys, new_eph, shared_x25519, \
+from lethe.keys import derive_aes_keys, new_eph, shared_x25519, \
     eph_pub_bytes
 from lethe.transfer import seal_file, open_file, TransferError
 from lethe.policy import Policy, seal_package, enforce_policy, PolicyError
@@ -144,18 +145,46 @@ def test_ecdhe_agreement():
     sa = shared_x25519(a, eph_pub_bytes(b))
     sb = shared_x25519(b, eph_pub_bytes(a))
     assert sa == sb, "ECDH shared secrets must agree"
-    ka = derive_aes_keys(sa, b"session", 1.0)
-    kb = derive_aes_keys(sb, b"session", 1.0)
+    ka = derive_aes_keys(sa, b"session")
+    kb = derive_aes_keys(sb, b"session")
     assert ka == kb
 
 
-# ------------------------------------------------------------------ FSKE
-def test_fske():
-    fwd = FSKE(os.urandom(32), b"sid")
-    K = [fwd.next_key() for _ in range(4)]
-    assert len(set(K)) == 4, "sub-keys must be distinct"
-    k0, k1 = K[0], K[1]
-    assert k0 != k1
+def test_trust_levels_agree():
+    """Admission-gate scores must never fork the key (LETHE-001)."""
+    _, field = tmp(True)
+    a, b = DeviceIdentity("a"), DeviceIdentity("b")
+    da, db = LetheDevice("a", a, provision_ring(a, "ka")), \
+        LetheDevice("b", b, provision_ring(b, "kb"))
+    for trust in (1.0, 0.9, 0.8, 0.7):
+        field.flush()
+        eph, m1 = bootstrap_tap(da, field, "b", trust_score=trust)
+        _, kb = receive_tap(db, field)
+        ka, _ = complete_handshake(da, field, eph, m1)
+        assert ka == kb, f"keys forked at trust={trust}"
+    # below the gate the tap is refused fail-closed, not half-opened
+    field.flush()
+    eph = new_eph()
+    weak = sign_message("tap1", "a", a, provision_ring(a, "ka"),
+                        eph_pub_bytes(eph), os.urandom(16), os.urandom(32),
+                        {"receiver": "b", "sender": "a", "session": "s",
+                         "ts": int(time.time()), "trust_score": 0.41})
+    field.put(weak)
+    try:
+        receive_tap(db, field)
+        raise AssertionError("weak tap accepted")
+    except HandshakeError:
+        pass
+
+
+def test_zero_peer_rejected():
+    """Low-order/all-zero X25519 peers must never yield a key (LETHE-007)."""
+    a = new_eph()
+    try:
+        shared_x25519(a, b"\x00" * 32)
+        raise AssertionError("all-zero peer accepted")
+    except ValueError:
+        pass
 
 
 # ------------------------------------------------------------------ Phase 6/7
@@ -283,7 +312,9 @@ def main():
     check("Phase 3 - stale tap rejected", test_replay_rejected)
     check("Phase 4/5 - mutual auth + independent session keys", test_mutual_auth_and_key)
     check("Phase 5 - ECDHE + HKDF agreement", test_ecdhe_agreement)
-    check("FSKE - forward-secure sub-keys are unique", test_fske)
+    check("Phase 4/5 - keys agree at every trust level, weak tap refused",
+          test_trust_levels_agree)
+    check("Phase 5 - all-zero X25519 peer rejected", test_zero_peer_rejected)
     check("Phase 6/7 - AES-256-GCM chunked file transfer", test_transfer)
     check("Phase 7 - tampered chunk rejected", test_tamper_rejected)
     check("Phase 8 - PCCP signature + integrity", test_policy)

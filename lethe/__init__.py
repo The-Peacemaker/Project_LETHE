@@ -14,22 +14,22 @@ never "unhackable".
 """
 
 from lethe.identity import DeviceIdentity, identity_from_file, identity_to_file
-from lethe.ring import Ring, provision_ring, ISSUER_PUB, ISSUER_PRIV, RING_MAX_BYTES
+from lethe.ring import Ring, provision_ring, ISSUER_PUB, RING_MAX_BYTES
 from lethe.tap import NfcField, TapMessage, sign_message, verify_message
 from lethe.handshake import (bootstrap_tap, receive_tap, complete_handshake,
                              HandshakeError, LetheDevice)
-from lethe.keys import derive_aes_keys, FSKE, shared_x25519, zero_buf
+from lethe.keys import derive_aes_keys, shared_x25519, zero_buf
 from lethe.transfer import (Transfer, TransferError, seal_file, open_file)
 from lethe.policy import Policy, SignedEnvelope, enforce_policy, PolicyError
 from lethe.erasure import KeySlot, shred
 
 __all__ = [
     "DeviceIdentity", "identity_from_file", "identity_to_file",
-    "Ring", "provision_ring", "ISSUER_PUB", "ISSUER_PRIV", "RING_MAX_BYTES",
+    "Ring", "provision_ring", "ISSUER_PUB", "RING_MAX_BYTES",
     "NfcField", "TapMessage", "sign_message", "verify_message",
     "bootstrap_tap", "receive_tap", "complete_handshake", "HandshakeError",
     "LetheDevice",
-    "derive_aes_keys", "FSKE", "shared_x25519", "zero_buf",
+    "derive_aes_keys", "shared_x25519", "zero_buf",
     "Transfer", "TransferError", "seal_file", "open_file",
     "Policy", "SignedEnvelope", "enforce_policy", "PolicyError",
     "KeySlot", "shred",
