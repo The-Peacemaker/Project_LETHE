@@ -40,6 +40,11 @@ def main():
     ui.enable_color()
     os.makedirs(args.field, exist_ok=True)
     os.makedirs(args.channel, exist_ok=True)
+    for stale in ("tap1.json", "tap2.json"):
+        try:
+            os.remove(os.path.join(args.field, stale))
+        except OSError:
+            pass    # fresh ceremony namespace: never consume a previous run's tap
     field = NfcField(args.field)
 
     ui.title("LETHE RECEIVER  |  DEVICE B (OFFICER-BRAVO)")
